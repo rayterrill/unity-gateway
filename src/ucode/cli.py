@@ -3836,7 +3836,7 @@ def upgrade_cmd() -> None:
     """Upgrade ug to the latest version from GitHub."""
     legacy_distribution = "ucode"
     current_distribution = "unity-gateway"
-    git_url = "git+https://github.com/databricks/unity-gateway"
+    git_url = "git+https://github.com/rayterrill/unity-gateway.git"
     installed_distribution = _installed_cli_distribution()
     upgrade_requirement = f"{installed_distribution} @ {git_url}"
     migrated = False

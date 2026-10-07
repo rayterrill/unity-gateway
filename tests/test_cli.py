@@ -208,7 +208,7 @@ class TestUpgrade:
 
     @staticmethod
     def _requirement(distribution: str) -> str:
-        return f"{distribution} @ git+https://github.com/databricks/unity-gateway"
+        return f"{distribution} @ git+https://github.com/rayterrill/unity-gateway.git"
 
     @pytest.mark.parametrize("prog_name", ["ug", "ucode"])
     def test_before_cutover_upgrades_ucode_normally_without_verification(self, prog_name):
@@ -231,7 +231,7 @@ class TestUpgrade:
 
     @pytest.mark.parametrize("prog_name", ["ug", "ucode"])
     def test_cutover_migrates_legacy_distribution_and_verifies_commands(self, prog_name):
-        git_url = "git+https://github.com/databricks/unity-gateway"
+        git_url = "git+https://github.com/rayterrill/unity-gateway.git"
         rename_failure = subprocess.CompletedProcess(
             [],
             1,
@@ -342,8 +342,9 @@ class TestUpgrade:
 
         assert result.exit_code == 1
         assert "legacy `ucode` tool was removed" in result.output
-        assert "uv tool install --force git+https://github.com/databricks/unity-gateway" in re.sub(
-            r"\s+", " ", result.output
+        assert (
+            "uv tool install --force git+https://github.com/rayterrill/unity-gateway.git"
+            in re.sub(r"\s+", " ", result.output)
         )
 
     def test_post_migration_verification_failure_is_actionable(self):

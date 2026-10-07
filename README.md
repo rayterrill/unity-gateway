@@ -13,25 +13,41 @@ package is still named `ucode` for compatibility.
 - [`uv`](https://docs.astral.sh/uv/getting-started/installation/)
 - `npm`, when an agent CLI needs automatic installation
 
-## Install
+## Install this fork
+
+Install the maintained fork directly from GitHub:
 
 ```bash
-uv tool install git+https://github.com/databricks/unity-gateway
+uv tool install --reinstall git+https://github.com/rayterrill/unity-gateway.git
 ug --version
 ```
+
+To build a wheel and install the current source checkout:
+
+```bash
+git clone https://github.com/rayterrill/unity-gateway.git
+cd unity-gateway
+uv build --wheel                 # writes a wheel to dist/
+uv tool install --reinstall .    # installs this checkout as ug and ucode
+ug --version
+```
+
+Python 3.12+ and `uv` are required. The wheel is a Python package; there is no
+separate native binary to compile. After installing a new build, run
+`ug configure --workspace <workspace-url> --agents codex,opencode` to refresh
+those agents' local configuration. Later, `ug upgrade` reinstalls from this
+fork's `main` branch.
 
 ### Migrating from ucode
 
-Reinstall under the new distribution name:
+If an older tool is installed under the `ucode` distribution name, replace it:
 
 ```bash
 uv tool uninstall ucode
-uv tool install git+https://github.com/databricks/unity-gateway
+uv tool install git+https://github.com/rayterrill/unity-gateway.git
 ug --version
 ucode --version
 ```
-
-Future upgrades can use `ug upgrade` or `uv tool upgrade unity-gateway`.
 
 ## Launch Agents
 
@@ -279,7 +295,7 @@ The generated shell hooks expect Git Bash; PowerShell-only setups are not covere
 ## Development
 
 ```bash
-git clone https://github.com/databricks/unity-gateway
+git clone https://github.com/rayterrill/unity-gateway.git
 cd unity-gateway
 uv sync
 uv run pytest
