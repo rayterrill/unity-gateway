@@ -97,11 +97,15 @@ def sync_opencode_desktop(state: dict) -> None:
     if not isinstance(model, str) or not model or not isinstance(models, dict):
         raise RuntimeError("OpenCode needs a managed default model and provider models.")
     token = get_databricks_token(state["workspace"], state.get("profile"))
+    major_version = opencode.installed_major_version()
     base_urls = state.get("base_urls", {}).get("opencode") or build_opencode_base_urls(
         state["workspace"]
     )
-    overlay, _ = opencode.render_overlay(model, token, base_urls, models)
-    if overlay["model"] == model or "provider" not in overlay:
+    overlay, _ = opencode.render_overlay(
+        model, token, base_urls, models, major_version=major_version
+    )
+    provider_field = "providers" if major_version >= 2 else "provider"
+    if overlay["model"] == model or provider_field not in overlay:
         raise RuntimeError(f"OpenCode Desktop cannot route managed model {model}.")
 
     path = OPENCODE_DESKTOP_CONFIG_PATH
@@ -115,19 +119,11 @@ def sync_opencode_desktop(state: dict) -> None:
             raise RuntimeError(f"OpenCode Desktop settings at {path} must be a JSON object.")
     else:
         existing = {}
-    providers = existing.get("provider")
-    if isinstance(providers, dict):
-        for name in (
-            "databricks-anthropic",
-            "databricks-google",
-            "databricks-openai",
-            "databricks-oss",
-        ):
-            providers.pop(name, None)
+    opencode.remove_managed_providers(existing)
     merged = deep_merge_dict(existing, overlay)
     write_text_file(
         _desktop_plugin_path(),
-        opencode.render_auth_plugin(state),
+        opencode.render_auth_plugin(state, major_version=major_version),
     )
     write_json_file(path, merged)
 

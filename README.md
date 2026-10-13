@@ -122,6 +122,11 @@ also updates `~/.codex/config.toml`, shared by plain `codex` and Codex Desktop;
 `ug codex` retains its named profile and applies the same managed model. `--direct`
 and `--desktop` remain compatibility aliases for managed configuration.
 
+OpenCode 2 uses its `providers` config and a V2 request hook to obtain a fresh
+Databricks OAuth token for model requests; the bearer is not saved in
+`opencode.json`. `ug` detects the installed OpenCode major version when writing
+the shared config and retains the V1 format for existing V1 installations.
+
 Restart OpenCode Desktop if it is open; a fresh `opencode` CLI process picks up
 the change immediately. For Codex Desktop, finish active tasks and restart the
 app server on the connected host, then reconnect so the catalog and default are
