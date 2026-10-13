@@ -304,6 +304,47 @@ class TestRenderOverlay:
         assert "User-Agent" not in provider_headers
         assert provider_headers["Authorization"] == "Bearer tok"
 
+    def test_request_tags_header_added_per_model_when_env_set(self, monkeypatch):
+        # Like the UA, request tags ride at the per-model level so they survive
+        # OpenCode's provider-level header clobber.
+        tags = '{"team":"infra","env":"prod"}'
+        monkeypatch.setenv("AI_GATEWAY_REQUEST_TAGS", tags)
+        models = {"anthropic": ["claude-sonnet"], "oss": ["gpt-oss"]}
+        overlay, _ = opencode.render_overlay("claude-sonnet", "tok", _base_urls(), models)
+        for provider, model in (
+            ("databricks-anthropic", "claude-sonnet"),
+            ("databricks-oss", "gpt-oss"),
+        ):
+            model_headers = overlay["provider"][provider]["models"][model]["headers"]
+            assert model_headers["Databricks-Ai-Gateway-Request-Tags"] == tags
+
+    def test_request_tags_header_absent_when_env_unset(self, monkeypatch):
+        monkeypatch.delenv("AI_GATEWAY_REQUEST_TAGS", raising=False)
+        models = {"anthropic": ["claude-sonnet"]}
+        overlay, _ = opencode.render_overlay("claude-sonnet", "tok", _base_urls(), models)
+        model_headers = overlay["provider"]["databricks-anthropic"]["models"]["claude-sonnet"][
+            "headers"
+        ]
+        assert "Databricks-Ai-Gateway-Request-Tags" not in model_headers
+
+    def test_v2_request_tags_reach_each_managed_model_without_saving_a_token(self, monkeypatch):
+        tags = '{"source":"opencode-desktop"}'
+        monkeypatch.setenv("AI_GATEWAY_REQUEST_TAGS", tags)
+        models = {"anthropic": ["claude-sonnet"], "gemini": ["gemini-2"], "oss": ["gpt-oss"]}
+
+        overlay, _ = opencode.render_overlay(
+            "claude-sonnet", "secret-token", _base_urls(), models, major_version=2
+        )
+
+        for provider, model in (
+            ("databricks-anthropic", "claude-sonnet"),
+            ("databricks-google", "gemini-2"),
+            ("databricks-oss", "gpt-oss"),
+        ):
+            headers = overlay["providers"][provider]["models"][model]["headers"]
+            assert headers["Databricks-Ai-Gateway-Request-Tags"] == tags
+        assert "secret-token" not in json.dumps(overlay)
+
     def test_managed_keys_include_model(self):
         _, keys = opencode.render_overlay("model", "tok", _base_urls(), {})
         assert ["model"] in keys
