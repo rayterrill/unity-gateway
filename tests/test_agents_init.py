@@ -891,7 +891,7 @@ class TestInstallToolBinary:
         monkeypatch.setattr("ucode.agents._minimum_version_error", lambda _: next(errors))
 
         assert install_tool_binary("opencode") is True
-        assert calls == [["npm", "install", "-g", "opencode-ai@1"]]
+        assert calls == [["npm", "install", "-g", "opencode-ai@2"]]
 
     @pytest.mark.parametrize("update_succeeds", [False, True])
     def test_required_update_must_clear_version_blocker(self, monkeypatch, update_succeeds):

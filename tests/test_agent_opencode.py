@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
+from base64 import urlsafe_b64encode
 from copy import deepcopy
 from unittest.mock import patch
 
@@ -28,7 +31,7 @@ class TestOpencodeSpec:
         assert opencode.SPEC["binary"] == "opencode"
 
     def test_package(self):
-        assert opencode.SPEC["package"] == "opencode-ai@1"
+        assert opencode.SPEC["package"] == "opencode-ai@2"
 
     def test_display(self):
         assert opencode.SPEC["display"] == "OpenCode"
@@ -45,12 +48,21 @@ class TestOpencodeSpec:
 
         assert message is not None
         assert "requires OpenCode 1.0.220 or newer" in message
-        assert "npm install -g opencode-ai@1" in message
+        assert "npm install -g opencode-ai@2" in message
 
     def test_supported_version_needs_no_required_update(self, monkeypatch):
         monkeypatch.setattr(opencode, "agent_version", lambda _binary: "1.0.220")
 
         assert opencode.minimum_version_error() is None
+
+    @pytest.mark.parametrize(
+        ("reported", "major"),
+        [("opencode v2.0.28", 2), ("1.18.34", 1)],
+    )
+    def test_installed_cli_version_selects_plugin_contract(self, monkeypatch, reported, major):
+        monkeypatch.setattr(opencode, "agent_version", lambda _binary: reported)
+
+        assert opencode.installed_major_version() == major
 
 
 def test_migrate_only_tracked_user_mcps_and_preserve_shared_entries(monkeypatch, tmp_path):
@@ -119,6 +131,45 @@ class TestAuthPlugin:
 
         assert "if (!refreshPromise)" in plugin
         assert "mintToken().finally(() => { refreshPromise = undefined })" in plugin
+
+    def test_v2_plugin_refreshes_expired_token_for_databricks_requests(self, monkeypatch, tmp_path):
+        count = tmp_path / "refresh-count"
+        payload = urlsafe_b64encode(b'{"exp":1}').decode().rstrip("=")
+        expired_jwt = f"header.{payload}.signature"
+        helper = tmp_path / "auth.py"
+        helper.write_text(
+            "import sys\n"
+            "with open(sys.argv[1], 'a') as count:\n"
+            "    count.write('x')\n"
+            "print(sys.argv[2])\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            opencode,
+            "build_auth_token_argv",
+            lambda *args, **kwargs: [sys.executable, str(helper), str(count), expired_jwt],
+        )
+        plugin = tmp_path / "ucode-auth.mjs"
+        plugin.write_text(opencode.render_auth_plugin({"workspace": WS}, major_version=2))
+        script = f"""
+          import assert from "node:assert/strict"
+          const plugin = (await import({json.dumps(plugin.as_uri())})).default
+          let onRequest
+          await plugin.setup({{session: {{hook: async (name, fn) => {{
+            assert.equal(name, "http.request")
+            onRequest = fn
+          }}}}}})
+          const other = new Request("https://example.com", {{headers: {{authorization: "original"}}}})
+          await onRequest({{model: {{providerID: "other"}}, request: other}})
+          assert.equal(other.headers.get("authorization"), "original")
+          for (let i = 0; i < 2; i++) {{
+            const request = new Request("https://example.com")
+            await onRequest({{model: {{providerID: "databricks-oss"}}, request}})
+            assert.equal(request.headers.get("authorization"), "Bearer " + {json.dumps(expired_jwt)})
+          }}
+        """
+        subprocess.run(["node", "--input-type=module", "-e", script], check=True, timeout=10)
+        assert count.read_text(encoding="utf-8") == "xx"
 
 
 class TestRenderOverlay:
@@ -563,6 +614,7 @@ class TestWriteToolConfigStaleProviderCleanup:
         backup_file = tmp_path / "opencode-backup.json"
         monkeypatch.setattr(oc_mod, "OPENCODE_CONFIG_PATH", config_file)
         monkeypatch.setattr(oc_mod, "OPENCODE_BACKUP_PATH", backup_file)
+        monkeypatch.setattr(oc_mod, "installed_major_version", lambda: 1)
 
         stale = {
             "provider": {
@@ -606,6 +658,7 @@ class TestWriteToolConfigStaleProviderCleanup:
         backup_file = tmp_path / "opencode-backup.json"
         monkeypatch.setattr(oc_mod, "OPENCODE_CONFIG_PATH", config_file)
         monkeypatch.setattr(oc_mod, "OPENCODE_BACKUP_PATH", backup_file)
+        monkeypatch.setattr(oc_mod, "installed_major_version", lambda: 1)
 
         state = {
             "workspace": WS,
@@ -622,6 +675,47 @@ class TestWriteToolConfigStaleProviderCleanup:
 
         written = json.loads(config_file.read_text())
         assert written["model"] == "databricks-anthropic/claude-sonnet"
+
+    def test_v2_launch_replaces_managed_v1_and_v2_entries_without_saving_token(
+        self, tmp_path, monkeypatch
+    ):
+        config_file = tmp_path / "opencode.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "theme": "user-theme",
+                    "provider": {"databricks-oss": {"options": {"apiKey": "old-token"}}},
+                    "providers": {
+                        "databricks-oss": {"models": {"stale": {}}},
+                        "other": {"name": "user provider"},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(opencode, "OPENCODE_CONFIG_PATH", config_file)
+        monkeypatch.setattr(opencode, "OPENCODE_BACKUP_PATH", tmp_path / "backup.json")
+        monkeypatch.setattr(opencode, "installed_major_version", lambda: 2)
+        state = {
+            "workspace": WS,
+            "base_urls": {"opencode": _base_urls()},
+            "opencode_models": {"oss": ["system.ai.kimi-k2-7-code"]},
+            "managed_configs": {},
+        }
+        with patch("ucode.agents.opencode.save_state"):
+            opencode.write_tool_config(state, "system.ai.kimi-k2-7-code", token="secret-token")
+
+        saved = config_file.read_text(encoding="utf-8")
+        config = json.loads(saved)
+        assert "secret-token" not in saved
+        assert "old-token" not in saved
+        assert "provider" not in config
+        assert config["providers"]["other"] == {"name": "user provider"}
+        assert list(config["providers"]["databricks-oss"]["models"]) == ["system.ai.kimi-k2-7-code"]
+        assert config["providers"]["databricks-oss"]["settings"]["baseURL"] == _base_urls()["oss"]
+        assert 'ctx.session.hook("http.request"' in (
+            config_file.parent / "plugin" / "ucode-auth.js"
+        ).read_text(encoding="utf-8")
 
 
 class TestWriteUserMcpServers:

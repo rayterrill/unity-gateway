@@ -7,7 +7,7 @@ import json
 import tomlkit
 
 from ucode import desktop_config
-from ucode.agents import codex
+from ucode.agents import codex, opencode
 
 WORKSPACE = "https://ws.example.com"
 
@@ -62,6 +62,7 @@ def test_opencode_desktop_registers_only_managed_deepseek_and_keeps_user_setting
     )
     monkeypatch.setattr(desktop_config, "OPENCODE_PLUGIN_BACKUP_PATH", tmp_path / "plugin.backup")
     monkeypatch.setattr(desktop_config, "get_databricks_token", lambda *a: "test-token")
+    monkeypatch.setattr(opencode, "installed_major_version", lambda: 1)
     model = "platform_ai_gateway_dbricks.models.azure-deepseek-v4-1-flash"
 
     desktop_config.sync_opencode_desktop(
@@ -79,6 +80,48 @@ def test_opencode_desktop_registers_only_managed_deepseek_and_keeps_user_setting
     assert saved["provider"]["unrelated"] == {"npm": "other"}
     assert saved["theme"] == "my-theme"
     assert (path.parent / "plugin" / "ucode-auth.js").exists()
+
+
+def test_opencode_v2_desktop_sync_preserves_user_settings_and_omits_oauth_token(
+    monkeypatch, tmp_path
+):
+    path = tmp_path / "opencode" / "opencode.json"
+    path.parent.mkdir()
+    path.write_text(
+        json.dumps(
+            {
+                "theme": "my-theme",
+                "provider": {"databricks-oss": {"options": {"apiKey": "expired"}}},
+                "providers": {"unrelated": {"name": "keep"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(desktop_config, "OPENCODE_DESKTOP_CONFIG_PATH", path)
+    monkeypatch.setattr(desktop_config, "OPENCODE_DESKTOP_BACKUP_PATH", tmp_path / "backup.json")
+    monkeypatch.setattr(desktop_config, "OPENCODE_PLUGIN_BACKUP_PATH", tmp_path / "plugin.js")
+    monkeypatch.setattr(desktop_config, "get_databricks_token", lambda *a: "secret-token")
+    monkeypatch.setattr(opencode, "installed_major_version", lambda: 2)
+    model = "platform_ai_gateway_dbricks.models.azure-deepseek-v4-1-flash"
+
+    desktop_config.sync_opencode_desktop(
+        {
+            "workspace": WORKSPACE,
+            "profile": "ws",
+            "opencode_default_model": model,
+            "opencode_models": {"oss": [model]},
+        }
+    )
+
+    saved = path.read_text(encoding="utf-8")
+    config = json.loads(saved)
+    assert "secret-token" not in saved
+    assert "expired" not in saved
+    assert "provider" not in config
+    assert config["providers"]["unrelated"] == {"name": "keep"}
+    assert config["model"] == f"databricks-oss/{model}"
+    assert model in config["providers"]["databricks-oss"]["models"]
+    assert 'ctx.session.hook("http.request"' in (path.parent / "plugin/ucode-auth.js").read_text()
 
 
 def test_revert_desktop_restores_existing_configs_and_removes_created_plugin(monkeypatch, tmp_path):
@@ -118,6 +161,7 @@ def test_opencode_desktop_refuses_unreadable_settings(monkeypatch, tmp_path):
     monkeypatch.setattr(desktop_config, "OPENCODE_DESKTOP_BACKUP_PATH", tmp_path / "config.backup")
     monkeypatch.setattr(desktop_config, "OPENCODE_PLUGIN_BACKUP_PATH", tmp_path / "plugin.backup")
     monkeypatch.setattr(desktop_config, "get_databricks_token", lambda *a: "test-token")
+    monkeypatch.setattr(opencode, "installed_major_version", lambda: 1)
     model = "platform_ai_gateway_dbricks.models.azure-deepseek-v4-1-flash"
 
     import pytest
