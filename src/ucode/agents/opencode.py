@@ -16,6 +16,7 @@ from ucode.config_io import (
     write_json_file,
     write_text_file,
 )
+from ucode.constants import AI_GATEWAY_REQUEST_TAGS_HEADER
 from ucode.databricks import (
     build_auth_token_argv,
     build_opencode_base_urls,
@@ -27,6 +28,7 @@ from ucode.state import mark_tool_managed, save_state
 from ucode.telemetry import agent_version, ug_version
 
 from .args import LaunchOptions, explicit_model_arg_value, has_explicit_model_arg
+from .request_tags import request_tags_header_value
 
 LEGACY_OPENCODE_CONFIG_PATH = APP_DIR / "opencode-xdg" / "opencode" / "opencode.json"
 OPENCODE_CONFIG_DIR = Path.home() / ".config" / "opencode"
@@ -316,6 +318,14 @@ def _oss_model_overlay(model: str, ua_header: dict[str, str]) -> dict:
     return overlay
 
 
+def _model_headers() -> dict[str, str]:
+    headers = {"User-Agent": f"ucode/{ug_version()} opencode/{agent_version('opencode')}"}
+    request_tags = request_tags_header_value()
+    if request_tags:
+        headers[AI_GATEWAY_REQUEST_TAGS_HEADER] = request_tags
+    return headers
+
+
 def render_overlay(
     model: str,
     token: str,
@@ -333,9 +343,10 @@ def render_overlay(
     # every provider, after the AI SDK's combineHeaders. The provider-level
     # `headers` are clobbered by that injection, but per-model `headers` are
     # merged AFTER and win — so the UA must live on each model entry.
-    ua_header = {
-        "User-Agent": f"ucode/{ug_version()} opencode/{agent_version('opencode')}",
-    }
+    # Per-model headers. Like the UA, request tags must ride here (not on the
+    # provider `options`), since OpenCode's per-model `headers` win over the
+    # provider-level ones after its own UA injection.
+    ua_header = _model_headers()
 
     anthropic_models = opencode_models.get("anthropic") or []
     gemini_models = opencode_models.get("gemini") or []
@@ -398,7 +409,7 @@ def _render_overlay_v2(
     models: dict[str, list[str]],
 ) -> tuple[dict, list[list[str]]]:
     """V2 provider settings contain no bearer token; the request hook supplies it."""
-    ua_header = {"User-Agent": f"ucode/{ug_version()} opencode/{agent_version('opencode')}"}
+    ua_header = _model_headers()
     providers: dict = {}
     keys: list[list[str]] = [["model"]]
     for family, provider_id, package, url_key in (
