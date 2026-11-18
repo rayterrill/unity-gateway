@@ -1,5 +1,9 @@
 # Integration tests
 
+Client-region emission has component coverage in `../test_metrics.py`, including
+metadata failures and OTLP encoding. Live AWS/Azure/GCP metadata discovery and backend
+ingestion of `client_region` are not covered by an integration journey.
+
 Auto picker coverage lives in the read-only workspace CUJs 4 and 7. See the
 [coverage and remaining gaps](../README.md); no Auto managed-config fixture is used.
 The configure-time managed-routing and exact Auto-version matrix has component coverage in

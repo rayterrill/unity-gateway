@@ -81,6 +81,11 @@ Recording is enabled only by `UG_ENABLE_METRICS_EXPORT=1` and defaults off.
   on a flush signal, or after EOF when the CLI exits or execs an agent. Recording and shutdown
   must never wait for locks, process startup, pipe capacity, or networking. A bounded startup
   backlog handles helper startup; contention and backpressure may still drop telemetry.
+- `metrics/client_region.py` discovers the host cloud region once per exporter process
+  from AWS IMDSv2, Azure, or GCP metadata. The optional OTLP resource attribute
+  `client_region` uses values such as `aws-ca-central-1`, `azure-eastus2`, and `gcp-us-west1`.
+  Metadata failures leave it unset. Keep these lookups in the exporter; workspace routing
+  and API-target environment variables do not identify the client's physical region.
 - Test new instrumentation with the `metrics_recorder` fixture and the relevant operation
   tests. Run `tests/test_metrics.py`, `tests/test_metrics_isolation.py`, and `just lint` for
   recorder/exporter changes; preserve disabled-mode and stalled-export isolation coverage.

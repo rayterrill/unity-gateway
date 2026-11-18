@@ -10,18 +10,142 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from unittest.mock import Mock
+from http.client import BadStatusLine, IncompleteRead
+from unittest.mock import Mock, call
 
 import pytest
+from opentelemetry.exporter.otlp.proto.common.metrics_encoder import encode_metrics
 from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import ExportMetricsServiceRequest
 from opentelemetry.sdk.metrics.export import AggregationTemporality
 
 from tests.conftest import metric_observations as observations
 from ucode import databricks, metrics, workspace
-from ucode.metrics import exporter
+from ucode.metrics import client_region, exporter
 from ucode.metrics.exporter import start_exporter
 
 HOST = "https://dbc-test.cloud.databricks.com"
+
+
+@pytest.fixture(autouse=True)
+def metadata_connection(monkeypatch):
+    # Exercise real region discovery without contacting the test runner's metadata service.
+    connection = Mock()
+    connection.getresponse.side_effect = OSError("metadata unavailable")
+    monkeypatch.setattr(client_region, "HTTPConnection", Mock(return_value=connection))
+    client_region.client_region.cache_clear()
+    yield connection
+    client_region.client_region.cache_clear()
+
+
+def metadata_response(body: bytes, status: int = 200):
+    response = io.BytesIO(body)
+    response.status = status
+    return response
+
+
+@pytest.mark.parametrize(
+    "replies,expected",
+    [
+        ([(200, b"imds-token"), (200, b"us-east-1")], "aws-us-east-1"),
+        ([(200, b"imds-token"), (200, b"ca-central-1\n")], "aws-ca-central-1"),
+        ([(200, b"imds-token"), (200, b"us-gov-west-1")], "aws-us-gov-west-1"),
+        ([(404, b""), (200, b"eastus2")], "azure-eastus2"),
+        (
+            [(404, b""), (404, b""), (200, b"projects/123/zones/us-west1-a")],
+            "gcp-us-west1",
+        ),
+        (
+            [(404, b""), (404, b""), (200, b"projects/123/zones/europe-west12-b")],
+            "gcp-europe-west12",
+        ),
+    ],
+)
+def test_cloud_metadata_region_is_emitted_and_cached(metadata_connection, replies, expected):
+    metadata_connection.getresponse.side_effect = [
+        metadata_response(body, status) for status, body in replies
+    ]
+    for _ in range(2):
+        result = exporter.aggregate([("ug_usage_duration_ms", 10, {})])
+        request = ExportMetricsServiceRequest.FromString(encode_metrics(result).SerializeToString())
+        attrs = request.resource_metrics[0].resource.attributes
+        assert {attr.key: attr.value.string_value for attr in attrs}["client_region"] == expected
+        assert (
+            request.resource_metrics[0].scope_metrics[0].metrics[0].histogram.data_points[0].sum
+            == 10
+        )
+    assert metadata_connection.getresponse.call_count == len(replies)
+    assert metadata_connection.close.call_count == len(replies)
+    assert client_region.HTTPConnection.call_args_list == [
+        call("169.254.169.254", timeout=0.2)
+    ] * len(replies)
+    calls = metadata_connection.request.call_args_list
+    assert calls[0] == call(
+        "PUT", "/latest/api/token", headers={"X-aws-ec2-metadata-token-ttl-seconds": "60"}
+    )
+    if expected.startswith("aws-"):
+        assert calls[1] == call(
+            "GET",
+            "/latest/meta-data/placement/region",
+            headers={"X-aws-ec2-metadata-token": "imds-token"},
+        )
+    else:
+        assert calls[1] == call(
+            "GET",
+            "/metadata/instance/compute/location?api-version=2021-02-01&format=text",
+            headers={"Metadata": "true"},
+        )
+        if expected.startswith("gcp-"):
+            assert calls[2] == call(
+                "GET", "/computeMetadata/v1/instance/zone", headers={"Metadata-Flavor": "Google"}
+            )
+
+
+@pytest.mark.parametrize("failure", [TimeoutError(), OSError(), BadStatusLine("bad response")])
+def test_unavailable_client_region_is_omitted_and_miss_cached(
+    metadata_connection, monkeypatch, failure
+):
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    metadata_connection.getresponse.side_effect = failure
+    for _ in range(2):
+        result = exporter.aggregate([("ug_usage_duration_ms", 10, {})])
+        assert "client_region" not in result.resource_metrics[0].resource.attributes
+        assert metric_data(result)["ug_usage_duration_ms"].data.data_points[0].sum == 10
+    assert metadata_connection.request.call_count == 3
+    assert metadata_connection.close.call_count == 3
+    assert all(
+        "/latest/meta-data/" not in c.args[1] for c in metadata_connection.request.call_args_list
+    )
+
+
+@pytest.mark.parametrize(
+    "body,status",
+    [
+        (b"https://example.com/private", 200),
+        (b"\xff", 200),
+        (b"us-east-1", 302),
+        (b"x" * 1025, 200),
+    ],
+)
+def test_invalid_metadata_does_not_prevent_metrics_export(metadata_connection, body, status):
+    metadata_connection.getresponse.side_effect = [
+        metadata_response(b"imds-token"),
+        metadata_response(body, status),
+        metadata_response(body, status),
+        metadata_response(body, status),
+    ]
+    result = exporter.aggregate([("ug_usage_duration_ms", 10, {})])
+    assert "client_region" not in result.resource_metrics[0].resource.attributes
+    assert metric_data(result)["ug_usage_duration_ms"].data.data_points[0].sum == 10
+    assert metadata_connection.request.call_count == 4
+
+
+@pytest.mark.parametrize("failure", [TimeoutError(), IncompleteRead(b"partial"), ValueError()])
+def test_metadata_body_read_failure_closes_connection(metadata_connection, failure):
+    metadata_connection.getresponse.side_effect = None
+    metadata_connection.getresponse.return_value = Mock(status=200, read=Mock(side_effect=failure))
+    assert client_region.client_region() is None
+    assert metadata_connection.close.call_count == 3
 
 
 def test_bounds_buffer_and_drops_oldest(metrics_recorder):
@@ -475,12 +599,12 @@ def test_exporter_stops_after_disabled_endpoint(monkeypatch):
 
 def test_recording_does_not_import_sdk_or_http_client(monkeypatch):
     monkeypatch.setenv("UG_ENABLE_METRICS_EXPORT", "1")
-    code = "from ucode import metrics; metrics.begin('usage'); metrics.record('ug_usage_duration_ms', 1); import sys; print('opentelemetry.sdk' in sys.modules); print('requests' in sys.modules)"
+    code = "from ucode import metrics; metrics.begin('usage'); metrics.record('ug_usage_duration_ms', 1); import sys; print('opentelemetry.sdk' in sys.modules); print('requests' in sys.modules); print('ucode.metrics.client_region' in sys.modules)"
     result = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, timeout=10
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout == "False\nFalse\n"
+    assert result.stdout == "False\nFalse\nFalse\n"
 
 
 def test_subagent_trigger_is_scoped(metrics_recorder):

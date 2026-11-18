@@ -1,5 +1,11 @@
 # Test suites and user journeys
 
+`test_metrics.py` covers best-effort host-region discovery from AWS IMDSv2, Azure,
+and GCP metadata, cached successes and misses, malformed/oversized responses and
+timeouts, and optional `client_region` encoding in OTLP resource attributes. HTTP
+boundaries are substituted; recording does not import the detector. These checks
+do not establish live cloud-metadata access or backend ingestion of this attribute.
+
 `test_macos_provision.py` runs the Jamf script with sandboxed paths and stubbed installers.
 It covers shared Node/npm reuse and installation, checksum rejection, configure's MDM flag and
 npm prefix, credential cleanup before alias setup, single-agent workspaces, configure failures,

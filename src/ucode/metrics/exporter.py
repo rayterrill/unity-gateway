@@ -160,8 +160,16 @@ def aggregate(observations: list) -> MetricsData | None:
     from opentelemetry.sdk.resources import Resource
 
     from ucode.metrics import COUNTER_METRICS, METRICS, _labels
+    from ucode.metrics.client_region import client_region
     from ucode.telemetry import normalize_arch, normalize_os, ug_version
 
+    resource_attributes = {
+        "ug_version": ug_version(),
+        "os": normalize_os(sys.platform),
+        "arch": normalize_arch(platform.machine()),
+    }
+    if region := client_region():
+        resource_attributes["client_region"] = region
     reader = InMemoryMetricReader(
         preferred_temporality={
             Counter: AggregationTemporality.DELTA,
@@ -171,13 +179,7 @@ def aggregate(observations: list) -> MetricsData | None:
     provider = MeterProvider(
         metric_readers=[reader],
         shutdown_on_exit=False,
-        resource=Resource(
-            {
-                "ug_version": ug_version(),
-                "os": normalize_os(sys.platform),
-                "arch": normalize_arch(platform.machine()),
-            }
-        ),
+        resource=Resource(resource_attributes),
         views=[
             View(
                 instrument_type=Histogram,
