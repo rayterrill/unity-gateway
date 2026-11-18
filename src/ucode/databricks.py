@@ -4497,6 +4497,7 @@ def build_opencode_base_urls(workspace: str) -> dict[str, str]:
     return {
         "anthropic": build_tool_base_url("claude", workspace) + "/v1",
         "gemini": build_tool_base_url("gemini", workspace) + "/v1beta",
+        "openai": f"{workspace}/ai-gateway/openai/v1",
         "oss": f"{workspace}/ai-gateway/mlflow/v1",
     }
 

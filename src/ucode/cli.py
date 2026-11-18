@@ -804,7 +804,12 @@ def configure_shared_state(
     )
     # Claude's web-search server also needs a Responses-capable model.
     want_codex = (
-        fetch_all or "codex" in tools or "claude" in tools or "copilot" in tools or "pi" in tools
+        fetch_all
+        or "codex" in tools
+        or "claude" in tools
+        or "copilot" in tools
+        or "pi" in tools
+        or "opencode" in tools
     )
     # Codex smart routing can select OSS models such as GLM, so a Codex-only
     # configure must persist that discovered family too.
@@ -867,6 +872,8 @@ def configure_shared_state(
             opencode_models["anthropic"] = list(claude_models.values())
         if gemini_models:
             opencode_models["gemini"] = gemini_models
+        if codex_models:
+            opencode_models["openai"] = codex_models
         if oss_models:
             opencode_models["oss"] = oss_models
 
@@ -1874,6 +1881,8 @@ def _live_status_model_state(state: dict, tools: set[str]) -> tuple[dict, str]:
         opencode_models["anthropic"] = list(claude_models.values())
     if gemini_models:
         opencode_models["gemini"] = gemini_models
+    if codex_models:
+        opencode_models["openai"] = codex_models
     if oss_models:
         opencode_models["oss"] = oss_models
     live["opencode_models"] = opencode_models

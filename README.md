@@ -74,6 +74,10 @@ Use `ug opencode --model system.ai.glm-5-3` (or `-m`) to select a configured
 model for one launch. OpenCode's `provider/model` form is also accepted.
 Unknown Databricks models produce an error; this option does not add models
 to discovery or change ug's saved default.
+`ug configure` also discovers Databricks-hosted GPT model services in `system.ai`
+and adds them to OpenCode as `databricks-openai/<full-model-service-name>`.
+These use the gateway's OpenAI API with Databricks authentication. External
+OpenAI Model Provider Services are not configured for OpenCode by this path.
 
 `ug antigravity` (or `ug agy`) runs Google's Antigravity CLI 1.2.15 or later in its
 Enterprise Gateway mode, so it never asks for Google sign-in. It offers the workspace's
