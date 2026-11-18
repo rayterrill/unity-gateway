@@ -125,8 +125,8 @@ def managed_unservable_models(managed: dict, tool: str) -> list[str]:
 
     Only non-empty when *every* named model is unservable, which is when the translation yields
     nothing and the developer's own models stand — so the caller can say why the admin's list had no
-    effect. opencode has no OpenAI provider and pi has no OSS provider, so each can be handed a
-    valid model FQN it cannot route, and copilot serves only Claude and GPT.
+    effect. Pi has no OSS provider, and a tool can be handed a valid model FQN it cannot
+    route; Copilot serves only Claude and GPT.
     """
     if tool == "copilot":
         from ucode.agents.copilot import classify_copilot_model
@@ -171,7 +171,8 @@ def _manifest_models(managed: dict, tool: str) -> dict | list | None:
 def _bucket_by_provider(models: list[str]) -> dict[str, list[str]]:
     """Group model FQNs into OpenCode's provider buckets, mirroring how discovery builds them.
 
-    Discovery derives these from the per-family lists (claude -> anthropic, and gemini/oss as-is), so
+    Discovery derives these from the per-family lists (claude -> anthropic,
+    codex -> openai, and gemini/oss as-is), so
     the same family classification recovers them from a flat manifest list. Models whose family
     can't be identified are dropped.
     """
@@ -182,6 +183,8 @@ def _bucket_by_provider(models: list[str]) -> dict[str, list[str]]:
             buckets.setdefault("anthropic", []).append(model)
         elif family in ("gemini", "oss"):
             buckets.setdefault(family, []).append(model)
+        elif family == "codex":
+            buckets.setdefault("openai", []).append(model)
     return buckets
 
 

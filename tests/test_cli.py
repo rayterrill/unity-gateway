@@ -7530,8 +7530,21 @@ class TestConfigureSharedStateUsePat:
 
         assert state["claude_models"] == {"opus": "system.ai.claude-opus-4-8"}
         assert state["codex_models"] == ["system.ai.gpt-5"]
+        assert state["opencode_models"]["openai"] == ["system.ai.gpt-5"]
         assert legacy_called == []
         assert "uc_enabled" not in state
+
+    def test_opencode_only_configure_discovers_gpt_models(self, monkeypatch):
+        cli_mod, *_ = self._stub_deps(monkeypatch, pat_token="dapi-pat")
+        monkeypatch.setattr(
+            cli_mod,
+            "discover_model_services",
+            lambda w, t: ({}, ["system.ai.gpt-6-luna"], [], [], None),
+        )
+
+        state = cli_mod.configure_shared_state(self.WS, profile="DEFAULT", tools=["opencode"])
+
+        assert state["opencode_models"]["openai"] == ["system.ai.gpt-6-luna"]
 
     def test_codex_only_configure_persists_discovered_oss_models(self, monkeypatch):
         cli_mod, *_ = self._stub_deps(monkeypatch, pat_token="dapi-pat")

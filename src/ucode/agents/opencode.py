@@ -55,6 +55,7 @@ SPEC: ToolSpec = {
 PROVIDER_KEYS: list[list[str]] = [
     ["provider", "databricks-anthropic"],
     ["provider", "databricks-google"],
+    ["provider", "databricks-openai"],
     ["provider", "databricks-oss"],
 ]
 
@@ -65,6 +66,7 @@ import { promisify } from "node:util"
 const DATABRICKS_PROVIDERS = new Set([
   "databricks-anthropic",
   "databricks-google",
+  "databricks-openai",
   "databricks-oss",
 ])
 const AUTH_COMMAND = __AUTH_COMMAND__
@@ -223,7 +225,9 @@ def write_auth_plugin(state: dict) -> None:
 
 def _resolve_model_selector(model: str, opencode_models: dict[str, list[str]]) -> str:
     """Return an OpenCode model selector in provider/model form when possible."""
-    if model.startswith(("databricks-anthropic/", "databricks-google/", "databricks-oss/")):
+    if model.startswith(
+        ("databricks-anthropic/", "databricks-google/", "databricks-openai/", "databricks-oss/")
+    ):
         return model
 
     anthropic_models = opencode_models.get("anthropic") or []
@@ -233,6 +237,10 @@ def _resolve_model_selector(model: str, opencode_models: dict[str, list[str]]) -
     gemini_models = opencode_models.get("gemini") or []
     if model in gemini_models:
         return f"databricks-google/{model}"
+
+    openai_models = opencode_models.get("openai") or []
+    if model in openai_models:
+        return f"databricks-openai/{model}"
 
     oss_models = opencode_models.get("oss") or []
     if model in oss_models:
@@ -318,6 +326,7 @@ def render_overlay(
 
     anthropic_models = opencode_models.get("anthropic") or []
     gemini_models = opencode_models.get("gemini") or []
+    openai_models = opencode_models.get("openai") or []
     oss_models = opencode_models.get("oss") or []
 
     providers: dict = {}
@@ -353,6 +362,17 @@ def render_overlay(
             "models": {m: {"headers": ua_header} for m in gemini_models},
         }
         keys.append(["provider", "databricks-google"])
+    if openai_models:
+        providers["databricks-openai"] = {
+            "npm": "@ai-sdk/openai",
+            "options": {
+                "baseURL": opencode_base_urls["openai"],
+                "apiKey": token,
+                "headers": auth_headers,
+            },
+            "models": {m: {"headers": ua_header} for m in openai_models},
+        }
+        keys.append(["provider", "databricks-openai"])
     if oss_models:
         providers["databricks-oss"] = {
             "npm": "@ai-sdk/openai",
@@ -458,6 +478,9 @@ def default_model(state: dict) -> str | None:
     gemini = opencode_models.get("gemini") or []
     if gemini:
         return gemini[0]
+    openai = opencode_models.get("openai") or []
+    if openai:
+        return openai[0]
     oss = opencode_models.get("oss") or []
     return oss[0] if oss else None
 

@@ -19,6 +19,7 @@ def _base_urls() -> dict[str, str]:
     return {
         "anthropic": f"{WS}/ai-gateway/anthropic/v1",
         "gemini": f"{WS}/ai-gateway/gemini/v1beta",
+        "openai": f"{WS}/ai-gateway/openai/v1",
         "oss": f"{WS}/ai-gateway/mlflow/v1",
     }
 
@@ -148,6 +149,18 @@ class TestRenderOverlay:
             "system.ai.kimi-k2-7-code", "tok", _base_urls(), models
         )
         assert "databricks-oss" in overlay["provider"]
+
+    def test_databricks_gpt_model_uses_openai_provider(self):
+        model = "system.ai.gpt-6-luna"
+        overlay, keys = opencode.render_overlay(model, "tok", _base_urls(), {"openai": [model]})
+
+        assert overlay["model"] == f"databricks-openai/{model}"
+        provider = overlay["provider"]["databricks-openai"]
+        assert provider["npm"] == "@ai-sdk/openai"
+        assert provider["options"]["baseURL"] == f"{WS}/ai-gateway/openai/v1"
+        assert model in provider["models"]
+        assert ["provider", "databricks-openai"] in keys
+        assert opencode.default_model({"opencode_models": {"openai": [model]}}) == model
 
     def test_oss_provider_uses_ai_sdk_openai_package(self):
         models = {"oss": ["system.ai.kimi-k2-7-code"]}

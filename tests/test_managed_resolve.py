@@ -580,6 +580,7 @@ class TestManagedStateOverrides:
                     "model_config": {
                         "models": [
                             "system.ai.claude-opus-4-8",
+                            "system.ai.gpt-6-luna",
                             "system.ai.gemini-3-flash",
                             "system.ai.kimi-k2-7-code",
                         ]
@@ -590,6 +591,7 @@ class TestManagedStateOverrides:
         assert managed_state_overrides(managed, "opencode") == {
             "opencode_models": {
                 "anthropic": ["system.ai.claude-opus-4-8"],
+                "openai": ["system.ai.gpt-6-luna"],
                 "gemini": ["system.ai.gemini-3-flash"],
                 "oss": ["system.ai.kimi-k2-7-code"],
             }
@@ -703,10 +705,9 @@ class TestManagedUnservableModels:
             self._managed("pi", ["system.ai.kimi-k2-7-code"]), "pi"
         ) == ["system.ai.kimi-k2-7-code"]
 
-    def test_opencode_gpt_only_is_unservable(self):
-        # OpenCode has no OpenAI provider block.
+    def test_opencode_gpt_only_is_servable(self):
         managed = self._managed("opencode", ["system.ai.gpt-5"])
-        assert managed_unservable_models(managed, "opencode") == ["system.ai.gpt-5"]
+        assert managed_unservable_models(managed, "opencode") == []
 
     @pytest.mark.parametrize(
         ("tool", "models"),
