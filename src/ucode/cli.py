@@ -956,7 +956,7 @@ def _configure_shared_workspace_states(
     return states
 
 
-_PROVIDER_TOOLS = ("claude", "codex", "gemini", AGENT_COPILOT)
+_PROVIDER_TOOLS = ("claude", "codex", "gemini", "opencode", AGENT_COPILOT)
 
 
 def _reject_unsupported_model_source(
@@ -1314,12 +1314,12 @@ def _maybe_select_provider_service(tool: str, state: dict) -> dict:
     (``system.ai``), a Model Provider Service, or a custom Unity Catalog model location — and
     persist (or clear) the choice.
 
-    No-op for tools other than claude/codex/gemini/antigravity/copilot (the Gemini API agents have
+    No-op for tools other than claude/codex/opencode/gemini/antigravity/copilot (the Gemini API agents have
     no custom location). Falls
     back to Databricks when no matching provider services are found or the listing fails and no
     custom location is offered.
     """
-    if tool not in ("claude", "codex", "gemini", "antigravity", "copilot"):
+    if tool not in ("claude", "codex", "opencode", "gemini", "antigravity", "copilot"):
         return state
     display = TOOL_SPECS[tool]["display"]
 
@@ -1663,7 +1663,7 @@ def _configure_workspace_command(
             strict=False,
         )
 
-    # Offer the provider picker for the chosen claude/codex tools only on the
+    # Offer the provider picker for compatible agents only on the
     # interactive path (no --agents); otherwise stay on the Databricks path.
     if offer_provider:
         for tool_name in picked:
@@ -2314,16 +2314,25 @@ def _valid_agent_or_raise(agent: str) -> str:
 @agents_app.command("add")
 def agents_add(
     agent: Annotated[str, typer.Argument(help="Agent to self-manage (e.g. opencode).")],
+    provider: Annotated[
+        str | None,
+        typer.Option(
+            "--provider",
+            help="OpenCode: save an OpenAI Model Provider Service as the model source.",
+        ),
+    ] = None,
 ) -> None:
     """Set up an agent your workspace's managed config doesn't enable, and self-manage it.
 
     Runs the normal agent setup — logging in, discovering its models, and writing its config — so
-    you can launch it with ``ug <agent>`` even when the managed config doesn't enable it. There is
-    no reconfigure flow yet; re-running is a no-op once the agent is self-managed. Admin-enabled
-    agents are set up by ``ug configure`` and left untouched.
+    you can launch it with ``ug <agent>`` even when the managed config doesn't enable it.
+    Re-running with ``--provider`` changes an already self-managed OpenCode agent's source;
+    otherwise re-running is a no-op. Admin-enabled agents are left untouched.
     """
     try:
         tool = _valid_agent_or_raise(agent)
+        if provider is not None and tool != "opencode":
+            raise RuntimeError("`agents add --provider` currently supports OpenCode only.")
         state = load_state()
         workspace = state.get("workspace")
         if not workspace:
@@ -2336,11 +2345,13 @@ def agents_add(
                 "— no action needed."
             )
             return
-        if management is AgentManagement.SELF:
+        if management is AgentManagement.SELF and provider is None:
             print_note(f"{TOOL_SPECS[tool]['display']} is already in your self-managed list.")
             return
         with managed_write_session():
-            _setup_single_agent([(workspace, state.get("profile"))], tool, apply_managed=False)
+            _setup_single_agent(
+                [(workspace, state.get("profile"))], tool, apply_managed=False, provider=provider
+            )
         # Record the opt-in only after setup succeeds, on top of the state setup just persisted.
         state = load_state()
         add_self_managed_agent(state, tool)
@@ -4007,7 +4018,7 @@ def _launch_options(
     return LaunchOptions(
         launch_model=launch_model,
         # Pinned models for providers are resolved above through the provider-specific launch path.
-        user_pinned_model=user_pinned_model if provider is None else None,
+        user_pinned_model=user_pinned_model if provider is None or tool == "opencode" else None,
         launch_smart_routing=_routes_launch(
             tool,
             tool_args,
@@ -4427,7 +4438,7 @@ def _launch_tool(
             # Routing through a Model Provider Service pins no Databricks model;
             # scoped UC discovery likewise lets the agent select from the parent schema. Skip model
             # resolution, which would otherwise fail when global discovery found no models.
-            resolved_model = None
+            resolved_model = model if tool == "opencode" else None
             managed_source_model = (
                 managed_launch_model(managed or {}, recommendation, tool)
                 if tool in (AGENT_CLAUDE, AGENT_COPILOT)
@@ -4622,6 +4633,8 @@ def _launch_tool(
                 state[copilot_agent.LAUNCH_PROVIDER_SERVICE_KEY] = provider
             elif parent_schema:
                 state[copilot_agent.LAUNCH_MODEL_LOCATION_KEY] = parent_schema
+        elif tool == "opencode" and provider:
+            state["_opencode_launch_provider"] = provider
         launch_options = _launch_options(
             tool,
             ctx.args,
@@ -5085,6 +5098,14 @@ def gemini_cmd(
 )
 def opencode_cmd(
     ctx: typer.Context,
+    provider: Annotated[
+        str | None,
+        typer.Option(
+            "--provider",
+            help="Route through an OpenAI Model Provider Service "
+            "(<catalog>.<schema>.<name>). Pass before any `--` separator.",
+        ),
+    ] = None,
     model: Annotated[
         str | None,
         typer.Option(
@@ -5097,7 +5118,7 @@ def opencode_cmd(
     skip_preflight: SkipPreflightOption = False,
 ) -> None:
     """Launch OpenCode via Databricks."""
-    _launch_tool("opencode", ctx, model=model, skip_preflight=skip_preflight)
+    _launch_tool("opencode", ctx, provider=provider, model=model, skip_preflight=skip_preflight)
 
 
 @app.command(
@@ -5379,7 +5400,7 @@ def configure(
             help="Route through a Unity Catalog Model Provider Service "
             "(`<catalog>.<schema>.<name>`) instead of Databricks-hosted models. Applies with "
             "--agent or --agents for claude, codex, gemini, or copilot (Copilot CLI and VS "
-            "Code). Cannot be combined with --model-location.",
+            "Code), or opencode. Cannot be combined with --model-location.",
         ),
     ] = None,
     model_location: Annotated[

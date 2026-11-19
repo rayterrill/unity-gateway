@@ -1670,6 +1670,21 @@ def test_codex_provider_targets_use_responses_metadata_not_names(provider_type):
     assert db_mod.service_usable_for_tool("codex", service)
 
 
+def test_opencode_accepts_openai_provider_with_responses_models():
+    service = {
+        "provider_type": "openai",
+        "targets": ["gpt-responses", "gpt-chat-only"],
+        "target_api_types": {
+            "gpt-responses": ("openai/v1/responses",),
+            "gpt-chat-only": ("openai/v1/chat/completions",),
+        },
+    }
+
+    assert db_mod.provider_targets_for_tool("opencode", service) == ["gpt-responses"]
+    assert db_mod.service_usable_for_tool("opencode", service)
+    assert not db_mod.service_usable_for_tool("opencode", {**service, "provider_type": "anthropic"})
+
+
 class TestServiceUsableForTool:
     @pytest.mark.parametrize(
         ("tool", "provider_type"),

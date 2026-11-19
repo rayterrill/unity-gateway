@@ -77,7 +77,24 @@ to discovery or change ug's saved default.
 `ug configure` also discovers Databricks-hosted GPT model services in `system.ai`
 and adds them to OpenCode as `databricks-openai/<full-model-service-name>`.
 These use the gateway's OpenAI API with Databricks authentication. External
-OpenAI Model Provider Services are not configured for OpenCode by this path.
+OpenAI models can be selected through a Model Provider Service instead:
+
+```bash
+ug agents add opencode --provider platform-engineering-dev.ai_gateway.openai
+ug opencode --model <provider-model-id>
+```
+
+The first command opts OpenCode into self-managed setup when the workspace's
+published configuration enables only other agents. `ug opencode --provider
+<catalog>.<schema>.<name>` also selects a service for one launch. OpenCode lists
+models from the gateway's Codex catalog under
+`databricks-openai-upstream/<provider-model-id>` and refreshes that list on each
+`ug opencode` launch. The catalog can include models unavailable to the OpenAI
+project or unsuitable for OpenCode; the verified default for this service is
+`gpt-4.1-mini`. To use a newly released model before Databricks lists it, pass
+its ID with `--model`; the model must support OpenCode's API requests. The gateway
+supplies the OpenAI credential; OpenCode keeps using a Databricks token. Models
+from `system.ai` remain separate provider entries.
 
 `ug antigravity` (or `ug agy`) runs Google's Antigravity CLI 1.2.15 or later in its
 Enterprise Gateway mode, so it never asks for Google sign-in. It offers the workspace's
