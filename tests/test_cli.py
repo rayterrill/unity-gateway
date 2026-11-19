@@ -9980,11 +9980,11 @@ class TestHeadlessConfigureModelSource:
         ("agent_args", "flag", "value", "unsupported"),
         [
             (["--agent", "gemini"], "--model-location", "main.models", "Gemini CLI"),
-            (["--agent", "opencode"], "--provider", "main.default.anthropic", "OpenCode"),
+            (["--agent", "pi"], "--provider", "main.default.anthropic", "Pi"),
             (["--agents", "claude,gemini"], "--model-location", "main.models", "Gemini CLI"),
             (["--agents", "cursor"], "--model-location", "main.models", "the selected agents"),
         ],
-        ids=["gemini-location", "opencode-provider", "agents-mixed", "cursor-only"],
+        ids=["gemini-location", "pi-provider", "agents-mixed", "cursor-only"],
     )
     def test_unsupported_agent_rejected_before_setup(
         self, monkeypatch, agent_args, flag, value, unsupported
@@ -10047,6 +10047,25 @@ class TestHeadlessConfigureModelSource:
         assert result.exit_code == 0, result.output
         assert cli_mod.get_provider_service(saved[-1], "claude") == "main.default.new"
         assert cli_mod.get_provider_service(saved[-1], "codex") == "main.default.old"
+
+
+def test_opencode_provider_option_reaches_launch_path():
+    with patch("ucode.cli._launch_tool") as launch:
+        result = runner.invoke(
+            app,
+            [
+                "opencode",
+                "--provider",
+                "platform-engineering-dev.ai_gateway.openai",
+                "--model",
+                "gpt-6-sol",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert launch.call_args.args[0] == "opencode"
+    assert launch.call_args.kwargs["provider"] == "platform-engineering-dev.ai_gateway.openai"
+    assert launch.call_args.kwargs["model"] == "gpt-6-sol"
 
 
 class TestLaunchWithManagedFilePicker:

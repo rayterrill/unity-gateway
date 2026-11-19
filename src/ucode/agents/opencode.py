@@ -18,11 +18,12 @@ from ucode.config_io import (
     write_json_file,
     write_text_file,
 )
-from ucode.constants import AI_GATEWAY_REQUEST_TAGS_HEADER
+from ucode.constants import AI_GATEWAY_REQUEST_TAGS_HEADER, MODEL_PROVIDER_SERVICE_HEADER
 from ucode.databricks import (
     build_auth_token_argv,
     build_opencode_base_urls,
     get_databricks_token,
+    list_codex_provider_models,
     model_token_limits,
 )
 from ucode.os_compatibility import subprocess_cross_os
@@ -56,6 +57,7 @@ PROVIDER_KEYS: list[list[str]] = [
     ["provider", "databricks-anthropic"],
     ["provider", "databricks-google"],
     ["provider", "databricks-openai"],
+    ["provider", "databricks-openai-upstream"],
     ["provider", "databricks-oss"],
 ]
 
@@ -67,6 +69,7 @@ const DATABRICKS_PROVIDERS = new Set([
   "databricks-anthropic",
   "databricks-google",
   "databricks-openai",
+  "databricks-openai-upstream",
   "databricks-oss",
 ])
 const AUTH_COMMAND = __AUTH_COMMAND__
@@ -249,6 +252,17 @@ def _resolve_model_selector(model: str, opencode_models: dict[str, list[str]]) -
     return model
 
 
+def _resolve_provider_model(model: str, models: list[str]) -> str:
+    """Select an OpenAI model, including one newer than the gateway catalog."""
+    prefix = "databricks-openai-upstream/"
+    model_id = model.removeprefix(prefix)
+    if not model_id:
+        raise RuntimeError("An OpenAI model ID is required.")
+    if model_id not in models:
+        models.append(model_id)
+    return f"{prefix}{model_id}"
+
+
 def resolve_explicit_model(model: str, state: dict) -> str:
     """Resolve and validate a model explicitly selected for an OpenCode launch.
 
@@ -303,8 +317,17 @@ def render_overlay(
     token: str,
     opencode_base_urls: dict[str, str],
     opencode_models: dict[str, list[str]],
+    *,
+    provider: str | None = None,
+    provider_models: list[str] | None = None,
 ) -> tuple[dict, list[list[str]]]:
     """Return (overlay, managed_key_paths) for opencode.json."""
+    provider_models = provider_models if provider_models is not None else []
+    selected_model = (
+        _resolve_provider_model(model, provider_models)
+        if provider
+        else _resolve_model_selector(model, opencode_models)
+    )
     auth_headers = {"Authorization": f"Bearer {token}"}
     # OpenCode hardcodes `User-Agent: opencode/<ver>` in session/llm.ts for
     # every provider, after the AI SDK's combineHeaders. The provider-level
@@ -373,6 +396,19 @@ def render_overlay(
             "models": {m: {"headers": ua_header} for m in openai_models},
         }
         keys.append(["provider", "databricks-openai"])
+    if provider:
+        upstream_headers = {**auth_headers, MODEL_PROVIDER_SERVICE_HEADER: provider}
+        upstream_model_headers = {**ua_header, MODEL_PROVIDER_SERVICE_HEADER: provider}
+        providers["databricks-openai-upstream"] = {
+            "npm": "@ai-sdk/openai",
+            "options": {
+                "baseURL": opencode_base_urls["openai"],
+                "apiKey": token,
+                "headers": upstream_headers,
+            },
+            "models": {m: {"headers": upstream_model_headers} for m in provider_models or []},
+        }
+        keys.append(["provider", "databricks-openai-upstream"])
     if oss_models:
         providers["databricks-oss"] = {
             "npm": "@ai-sdk/openai",
@@ -385,7 +421,7 @@ def render_overlay(
         }
         keys.append(["provider", "databricks-oss"])
 
-    overlay: dict = {"model": _resolve_model_selector(model, opencode_models)}
+    overlay: dict = {"model": selected_model}
     if providers:
         overlay["provider"] = providers
     return overlay, keys
@@ -393,12 +429,29 @@ def render_overlay(
 
 def write_tool_config(
     state: dict,
-    model: str,
+    model: str | None,
     token: str | None = None,
+    *,
+    provider: str | None = None,
+    provider_models: list[str] | None = None,
 ) -> tuple[dict, str]:
     backup_existing_file(OPENCODE_CONFIG_PATH, OPENCODE_BACKUP_PATH)
     if token is None:
         token = get_databricks_token(state["workspace"], state.get("profile"))
+    if provider:
+        if provider_models is None:
+            provider_models, reason = list_codex_provider_models(
+                state["workspace"], token, provider
+            )
+            if reason:
+                raise RuntimeError(f"Could not discover OpenAI models for {provider}: {reason}")
+        if not provider_models:
+            raise RuntimeError(f"OpenAI provider service {provider} returned no usable models.")
+        model = model or (
+            "gpt-4.1-mini" if "gpt-4.1-mini" in provider_models else provider_models[0]
+        )
+    elif model is None:
+        raise RuntimeError("No OpenCode model is configured.")
     opencode_base_urls = state.get("base_urls", {}).get("opencode") or build_opencode_base_urls(
         state["workspace"]
     )
@@ -407,6 +460,8 @@ def write_tool_config(
         token,
         opencode_base_urls,
         state.get("opencode_models") or {},
+        provider=provider,
+        provider_models=provider_models,
     )
     existing = read_json_safe(OPENCODE_CONFIG_PATH)
     write_auth_plugin(state)
@@ -416,6 +471,7 @@ def write_tool_config(
             "databricks-anthropic",
             "databricks-google",
             "databricks-openai",
+            "databricks-openai-upstream",
             "databricks-oss",
         ):
             providers.pop(stale, None)
@@ -503,9 +559,27 @@ def build_runtime_env(token: str, state: dict | None = None) -> dict[str, str]:
 def launch(state: dict, tool_args: list[str], *, options: LaunchOptions) -> None:
     """Launch OpenCode with the selected model and on-demand token refresh."""
     model = explicit_model_arg_value(tool_args) or options.user_pinned_model
-    if model is not None:
-        model = resolve_explicit_model(model, state)
-    token = _configure_launch(state, model)
+    provider = state.get("_opencode_launch_provider")
+    if provider:
+        token = get_databricks_token(state["workspace"], state.get("profile"))
+        provider_models, reason = list_codex_provider_models(state["workspace"], token, provider)
+        if reason:
+            raise RuntimeError(f"Could not discover OpenAI models for {provider}: {reason}")
+        if not provider_models:
+            raise RuntimeError(f"OpenAI provider service {provider} returned no usable models.")
+        if model is not None:
+            model = _resolve_provider_model(model, provider_models)
+        _, token = write_tool_config(
+            state,
+            model,
+            token=token,
+            provider=provider,
+            provider_models=provider_models,
+        )
+    else:
+        if model is not None:
+            model = resolve_explicit_model(model, state)
+        token = _configure_launch(state, model)
     env = build_runtime_env(token, state)
 
     if model is not None and not has_explicit_model_arg(tool_args):

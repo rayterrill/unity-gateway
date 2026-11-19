@@ -13,6 +13,7 @@ from ucode.agents.args import LaunchOptions
 from ucode.telemetry import client_platform
 
 WS = "https://example.databricks.com"
+OPENAI_MPS = "platform-engineering-dev.ai_gateway.openai"
 
 
 def _base_urls() -> dict[str, str]:
@@ -593,6 +594,93 @@ class TestOpencodeLaunchModel:
 
         configure.assert_not_called()
         popen.assert_not_called()
+
+
+class TestOpenAIProviderService:
+    def test_config_routes_upstream_models_without_changing_hosted_models(self):
+        hosted = {"openai": ["system.ai.gpt-6-luna"]}
+        overlay, keys = opencode.render_overlay(
+            "gpt-6-sol",
+            "tok",
+            _base_urls(),
+            hosted,
+            provider=OPENAI_MPS,
+            provider_models=["gpt-6-luna", "gpt-6-sol"],
+        )
+
+        upstream = overlay["provider"]["databricks-openai-upstream"]
+        hosted_provider = overlay["provider"]["databricks-openai"]
+        assert overlay["model"] == "databricks-openai-upstream/gpt-6-sol"
+        assert upstream["options"]["baseURL"] == f"{WS}/ai-gateway/openai/v1"
+        assert upstream["options"]["headers"]["Databricks-Model-Provider-Service"] == OPENAI_MPS
+        assert all(
+            row["headers"]["Databricks-Model-Provider-Service"] == OPENAI_MPS
+            for row in upstream["models"].values()
+        )
+        assert set(upstream["models"]) == {"gpt-6-luna", "gpt-6-sol"}
+        assert "Databricks-Model-Provider-Service" not in hosted_provider["options"]["headers"]
+        assert ["provider", "databricks-openai-upstream"] in keys
+
+    def test_reconfigure_refreshes_gateway_catalog(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "opencode.json"
+        monkeypatch.setattr(opencode, "OPENCODE_CONFIG_PATH", config_file)
+        monkeypatch.setattr(opencode, "OPENCODE_BACKUP_PATH", tmp_path / "backup.json")
+        state = {"workspace": WS, "opencode_models": {}, "managed_configs": {}}
+
+        with (
+            patch("ucode.agents.opencode.agent_version", return_value="1.0.220"),
+            patch("ucode.agents.opencode.save_state"),
+            patch(
+                "ucode.agents.opencode.list_codex_provider_models",
+                side_effect=[(["gpt-6-luna"], None), (["gpt-6-luna", "gpt-6-sol"], None)],
+            ),
+        ):
+            opencode.write_tool_config(state, None, token="tok", provider=OPENAI_MPS)
+            first = json.loads(config_file.read_text())
+            opencode.write_tool_config(state, None, token="tok", provider=OPENAI_MPS)
+            second = json.loads(config_file.read_text())
+
+        assert set(first["provider"]["databricks-openai-upstream"]["models"]) == {"gpt-6-luna"}
+        assert set(second["provider"]["databricks-openai-upstream"]["models"]) == {
+            "gpt-6-luna",
+            "gpt-6-sol",
+        }
+
+    def test_configure_uses_verified_default_before_generic_catalog_first(
+        self, tmp_path, monkeypatch
+    ):
+        config_file = tmp_path / "opencode.json"
+        monkeypatch.setattr(opencode, "OPENCODE_CONFIG_PATH", config_file)
+        monkeypatch.setattr(opencode, "OPENCODE_BACKUP_PATH", tmp_path / "backup.json")
+        state = {"workspace": WS, "opencode_models": {}, "managed_configs": {}}
+
+        with (
+            patch("ucode.agents.opencode.agent_version", return_value="1.0.220"),
+            patch("ucode.agents.opencode.save_state"),
+        ):
+            opencode.write_tool_config(
+                state,
+                None,
+                token="tok",
+                provider=OPENAI_MPS,
+                provider_models=["chat-latest", "gpt-4.1-mini"],
+            )
+
+        assert json.loads(config_file.read_text())["model"] == (
+            "databricks-openai-upstream/gpt-4.1-mini"
+        )
+
+    def test_explicit_new_model_can_be_selected_before_gateway_lists_it(self):
+        overlay, _ = opencode.render_overlay(
+            "gpt-6-new",
+            "tok",
+            _base_urls(),
+            {},
+            provider=OPENAI_MPS,
+            provider_models=["gpt-6-luna"],
+        )
+        assert overlay["model"] == "databricks-openai-upstream/gpt-6-new"
+        assert "gpt-6-new" in overlay["provider"]["databricks-openai-upstream"]["models"]
 
 
 class TestWriteToolConfigStaleProviderCleanup:

@@ -135,6 +135,27 @@ class TestAgentsAdd:
         assert not add_spy.called
         assert "already" in result.output
 
+    def test_opencode_provider_configures_even_when_already_self_managed(self):
+        state = {**BASE_STATE, SELF_MANAGED_AGENTS_KEY: ["opencode"]}
+        managed = {"enabled_agents": {"codex": {}}}
+        result, setup_spy, _, _ = self._run(
+            ["opencode", "--provider", "platform-engineering-dev.ai_gateway.openai"],
+            managed=managed,
+            state=state,
+        )
+
+        assert result.exit_code == 0, result.output
+        assert setup_spy.call_args.kwargs["apply_managed"] is False
+        assert (
+            setup_spy.call_args.kwargs["provider"] == "platform-engineering-dev.ai_gateway.openai"
+        )
+
+    def test_provider_rejects_other_agents(self):
+        result, setup_spy, _, _ = self._run(["pi", "--provider", "main.default.openai"])
+
+        assert result.exit_code == 1
+        assert not setup_spy.called
+
     def test_noop_when_admin_managed(self):
         managed = {"enabled_agents": {"opencode": {}}}
         result, setup_spy, add_spy, _ = self._run(["opencode"], managed=managed)

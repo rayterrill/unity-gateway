@@ -3119,6 +3119,7 @@ _TOOL_PROVIDER_TYPES: dict[str, tuple[str, ...]] = {
         "bedrock_mantle",
         "custom",
     ),
+    "opencode": ("openai",),
     "gemini": ("gemini_enterprise",),
     "antigravity": ("gemini_enterprise",),
     "copilot": (
@@ -3531,7 +3532,7 @@ def _provider_service_unusable_reason(tool: str, service: dict, service_name: st
 def provider_targets_for_tool(tool: str, service: dict) -> list[str]:
     """Return declared targets compatible with the tool's provider API."""
     targets = service.get("targets") or []
-    if tool in ("claude", "codex"):
+    if tool in ("claude", "codex", "opencode"):
         # MPS requests pass through without API translation.
         api_type = API_ANTHROPIC_MESSAGES if tool == "claude" else API_OPENAI_RESPONSES
         target_api_types = service.get("target_api_types") or {}

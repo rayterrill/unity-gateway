@@ -645,6 +645,10 @@ def configure_tool(
         if not model and not provider and not parent_schema:
             raise RuntimeError(f"A {tool} model must be selected before configuration.")
         result = copilot.write_tool_config(state, model)
+    elif tool == "opencode":
+        if not model and not provider:
+            raise RuntimeError(f"A {tool} model must be selected before configuration.")
+        result = opencode.write_tool_config(state, model, provider=provider)
     else:
         # Every tool in this branch needs a model — including gemini under a provider,
         # which still pins the service's target model in the URL.
@@ -659,7 +663,7 @@ def configure_tool(
         elif tool == "kilo":
             result = kilo.write_tool_config(state, model)
         else:
-            result = opencode.write_tool_config(state, model)
+            raise RuntimeError(f"Unsupported tool '{tool}'.")
     # gemini/opencode/kilo/pi return (state, token); codex/claude/copilot/antigravity return state
     if isinstance(result, tuple):
         return result[0]
