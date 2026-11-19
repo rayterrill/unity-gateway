@@ -569,6 +569,9 @@ def launch(state: dict, tool_args: list[str], *, options: LaunchOptions) -> None
             raise RuntimeError(f"OpenAI provider service {provider} returned no usable models.")
         if model is not None:
             model = _resolve_provider_model(model, provider_models)
+        else:
+            default_id = "gpt-4.1-mini" if "gpt-4.1-mini" in provider_models else provider_models[0]
+            model = _resolve_provider_model(default_id, provider_models)
         _, token = write_tool_config(
             state,
             model,
@@ -576,6 +579,13 @@ def launch(state: dict, tool_args: list[str], *, options: LaunchOptions) -> None
             provider=provider,
             provider_models=provider_models,
         )
+        # OpenCode's background server can keep an older model catalog and agent default
+        # after the config is rewritten. A private server reads this launch's fresh config.
+        if not any(
+            arg == "--standalone" or arg == "--server" or arg.startswith("--server=")
+            for arg in tool_args
+        ):
+            tool_args = ["--standalone", *tool_args]
     else:
         if model is not None:
             model = resolve_explicit_model(model, state)

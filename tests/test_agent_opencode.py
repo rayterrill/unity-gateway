@@ -597,6 +597,31 @@ class TestOpencodeLaunchModel:
 
 
 class TestOpenAIProviderService:
+    def test_launch_pins_provider_default_with_fresh_private_server(self):
+        state = {"workspace": WS, "_opencode_launch_provider": OPENAI_MPS}
+        with (
+            patch("ucode.agents.opencode.get_databricks_token", return_value="tok"),
+            patch(
+                "ucode.agents.opencode.list_codex_provider_models",
+                return_value=(["chat-latest", "gpt-4.1-mini"], None),
+            ),
+            patch("ucode.agents.opencode.write_tool_config", return_value=(state, "tok")),
+            patch("ucode.agents.opencode.subprocess_cross_os.popen") as popen,
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            popen.return_value.wait.return_value = 0
+            opencode.launch(state, ["run", "Reply OK"], options=LaunchOptions())
+
+        assert exc_info.value.code == 0
+        assert popen.call_args.args[0] == [
+            "opencode",
+            "--standalone",
+            "run",
+            "Reply OK",
+            "--model",
+            "databricks-openai-upstream/gpt-4.1-mini",
+        ]
+
     def test_config_routes_upstream_models_without_changing_hosted_models(self):
         hosted = {"openai": ["system.ai.gpt-6-luna"]}
         overlay, keys = opencode.render_overlay(
